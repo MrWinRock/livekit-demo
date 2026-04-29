@@ -11,8 +11,10 @@ from livekit.agents import (
     inference,
     room_io,
 )
-from livekit.plugins import ai_coustics, silero
+from livekit.plugins import ai_coustics, silero, bey
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+import os
 
 logger = logging.getLogger("agent")
 
@@ -25,9 +27,12 @@ class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
+            Always respond in Thai language.
+            You are female. Always use female polite particles: end sentences with "ค่ะ" or "นะคะ", use "ดิฉัน" or "หนู" to refer to yourself, and use "คุณ" when addressing the user.
             You eagerly assist users with their questions by providing information from your extensive knowledge.
             Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
+            You are curious, friendly, and have a sense of humor.
+            When greeting the user, ask them what they would like help with today.""",
         )
 
     # To add tools, use the @function_tool decorator.
@@ -103,8 +108,13 @@ async def my_agent(ctx: JobContext):
     # avatar = hedra.AvatarSession(
     #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
     # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
+    avatar = bey.AvatarSession(
+        avatar_id=os.getenv("BEY_AVATAR_ID"),
+    )
+    
+    # Start the avatar and wait for it to join
+    await avatar.start(session, room=ctx.room)
+
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
@@ -121,6 +131,10 @@ async def my_agent(ctx: JobContext):
 
     # Join the room and connect to the user
     await ctx.connect()
+    
+    await session.generate_reply(
+        instructions="Greet the user warmly in Thai and ask what you can help them with today."
+    )
 
 
 if __name__ == "__main__":
