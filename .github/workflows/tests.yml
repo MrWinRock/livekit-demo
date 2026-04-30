@@ -25,10 +25,9 @@ jobs:
     
     - name: Install dependencies
       run: UV_GIT_LFS=1 uv sync --dev
-        
-    - name: Run tests
-      env:
-        LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
-        LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
-        LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
-      run: uv run pytest -v
+
+    # Run only offline unit tests in CI. The LLM-judge tests in test_agent.py
+    # are excluded because they require LiveKit/inference secrets and cost
+    # credits per run — those should be run locally before pushing.
+    - name: Run offline tests
+      run: uv run pytest tests/test_products_db.py tests/test_web_search.py -v
