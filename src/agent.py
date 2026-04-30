@@ -1,6 +1,6 @@
+import asyncio
 import logging
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -13,63 +13,153 @@ from livekit.agents import (
     cli,
     function_tool,
     inference,
-    room_io,
 )
-from livekit.plugins import ai_coustics, bey, silero
+from livekit.plugins import bey, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-import products_db
+import backend_docs
+
+# import products_db
+import prompter
 import web_search
 
 logger = logging.getLogger("agent")
+_bg_tasks: set[asyncio.Task] = set()
 
 load_dotenv(".env.local")
 
 AGENT_MODEL = "openai/gpt-5.3-chat-latest"
-PRODUCTS_DB_PATH = Path(__file__).parent.parent / "data" / "products.db"
+# PRODUCTS_DB_PATH = Path(__file__).parent.parent / "data" / "products.db"
+
+# Core persona
+_PERSONA = """
+You are a helpful voice AI shop assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
+Always respond in Thai language.
+You are female. Always use female polite particles: end sentences with "ค่ะ" or "นะคะ", use "ดิฉัน" or "หนู" to refer to yourself, and use "คุณ" when addressing \
+the user.
+Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
+You are curious, friendly, and have a sense of humor.
+When greeting the user, ask them what they would like help with today.
+"""
+
+# Product catalog
+# _PRODUCT_INSTRUCTIONS = """
+# You help customers find products in our shop. When the user asks about products, prices, or what is available, use the search_products or list_all_products tools \
+# to get accurate information from the catalog. Never invent products or prices.
+# Translate English product names to Thai when speaking, but pass English keywords to the search tool.
+# """
+
+# Documents (uploaded PDFs / text files)
+_DOCUMENT_INSTRUCTIONS = """
+Before answering, read documents, you can choose multiple documents to read.
+When the user asks about anything company or work related — such as reports, plans, policies, procedures, announcements, or internal information — call list_documents first to check whether a relevant document exists. If one or more
+documents look relevant, tell the user which ones you found and ask which they want you to read. Only call read_document after the user has chosen. If no documents match, answer from general knowledge or use web_search.
+Also call list_documents if the user explicitly asks about uploaded files, PDFs, or what documents are available.
+After reading a document, answer the user's question grounded in that text — do not invent facts that are not in the document.
+Translate English document titles to Thai when speaking.
+"""
+
+# Web search
+_WEB_SEARCH_INSTRUCTIONS = """
+For general questions about a technology, what a product type does, how something works, or any topic outside our shop catalog, use the web_search tool.
+Do not use web_search for items already in our catalog — use search_products for those.
+Web search takes a couple of seconds, so when you decide to use it, briefly tell the user you are looking it up (e.g. "ขอดูข้อมูลก่อนนะคะ").
+"""
+
+# Number pronunciation
+_NUMBER_INSTRUCTIONS = """
+Always speak numbers in Thai, never in English. For prices, quantities, and number of days, use natural Thai numeric words (e.g. 1290 → "หนึ่งพันสองร้อยเก้าสิบบาท", 14 days → "สิบสี่วัน"). For digit
+sequences such as document number prefixes, codes, IDs, phone numbers, or years read aloud digit by digit, pronounce each digit in Thai
+(e.g. "01" → "ศูนย์หนึ่ง", "2026" said as a year → "สองศูนย์สองหก", "0812345678" → "ศูนย์แปดหนึ่งสองสามสี่ห้าหกเจ็ดแปด").
+Never say "zero", "one", "two" in English.
+"""
+
+AGENT_INSTRUCTIONS = "\n\n".join(
+    [
+        _PERSONA,
+        # _PRODUCT_INSTRUCTIONS,
+        _DOCUMENT_INSTRUCTIONS,
+        _WEB_SEARCH_INSTRUCTIONS,
+        _NUMBER_INSTRUCTIONS,
+    ]
+)
 
 
 class Assistant(Agent):
     def __init__(self) -> None:
-        super().__init__(
-            instructions="""You are a helpful voice AI shop assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            Always respond in Thai language.
-            You are female. Always use female polite particles: end sentences with "ค่ะ" or "นะคะ", use "ดิฉัน" or "หนู" to refer to yourself, and use "คุณ" when addressing the user.
-            You help customers find products in our shop. When the user asks about products, prices, or what is available, use the search_products or list_all_products tools to get accurate information from the catalog. Never invent products or prices.
-            For general questions about a technology, what a product type does, how something works, or any topic outside our shop catalog, use the web_search tool. Do not use web_search for items already in our catalog — use search_products for those.
-            Web search takes a couple of seconds, so when you decide to use it, briefly tell the user you are looking it up (e.g. "ขอดูข้อมูลก่อนนะคะ").
-            Speak prices naturally in Thai baht (e.g. "หนึ่งพันสองร้อยเก้าสิบบาท" for 1290 baht). Translate English product names to Thai when speaking, but pass English keywords to the search tool.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.
-            When greeting the user, ask them what they would like help with today.""",
-        )
+        super().__init__(instructions=AGENT_INSTRUCTIONS)
+
+    # @function_tool
+    # async def search_products(self, context: RunContext, query: str) -> str:
+    #     """Search the product catalog by name or description keyword.
+
+    #     Use this when the user asks about a specific product, type of product,
+    #     or feature. Pass English keywords (e.g. "headphones", "bluetooth", "cable").
+
+    #     Args:
+    #         query: English keyword to search for in product name or description.
+    #     """
+    #     logger.info(f"Searching products for: {query}")
+    #     results = products_db.search_products(PRODUCTS_DB_PATH, query)
+    #     if not results:
+    #         return f"No products found matching '{query}'."
+    #     return "\n".join(p.to_summary() for p in results)
+
+    # @function_tool
+    # async def list_all_products(self, context: RunContext) -> str:
+    #     """List every product in the catalog.
+
+    #     Use this when the user asks what is available, what you sell, or wants
+    #     to browse the full catalog.
+    #     """
+    #     logger.info("Listing all products")
+    #     products = products_db.list_all_products(PRODUCTS_DB_PATH)
+    #     return "\n".join(p.to_summary() for p in products)
 
     @function_tool
-    async def search_products(self, context: RunContext, query: str) -> str:
-        """Search the product catalog by name or description keyword.
+    async def list_documents(self, context: RunContext) -> str:
+        """List the uploaded documents (PDFs, text files) in the knowledge base.
 
-        Use this when the user asks about a specific product, type of product,
-        or feature. Pass English keywords (e.g. "headphones", "bluetooth", "cable").
+        Use this when the user asks "what documents do we have?", "what files are
+        uploaded?", or asks any question about uploaded files. Always call this
+        first and present the names back to the user before calling read_document.
+        """
+        logger.info("Listing backend documents")
+        docs = backend_docs.list_ready_documents()
+        if not docs:
+            return "No documents have been uploaded yet."
+        return "\n".join(d.to_summary() for d in docs)
+
+    @function_tool
+    async def read_document(self, context: RunContext, document_id: str) -> str:
+        """Read the text content of a specific uploaded document.
+
+        Only call this AFTER list_documents and AFTER the user has chosen
+        which document to read. The content is truncated for long files;
+        the truncation note is included so you can tell the user.
 
         Args:
-            query: English keyword to search for in product name or description.
+            document_id: The id from list_documents (e.g. "f1c69f7a-..."),
+                or a partial-id prefix that uniquely identifies the document.
         """
-        logger.info(f"Searching products for: {query}")
-        results = products_db.search_products(PRODUCTS_DB_PATH, query)
-        if not results:
-            return f"No products found matching '{query}'."
-        return "\n".join(p.to_summary() for p in results)
-
-    @function_tool
-    async def list_all_products(self, context: RunContext) -> str:
-        """List every product in the catalog.
-
-        Use this when the user asks what is available, what you sell, or wants
-        to browse the full catalog.
-        """
-        logger.info("Listing all products")
-        products = products_db.list_all_products(PRODUCTS_DB_PATH)
-        return "\n".join(p.to_summary() for p in products)
+        logger.info(f"Reading document: {document_id}")
+        doc = backend_docs.get_document(document_id)
+        if doc is None:
+            for candidate in backend_docs.list_ready_documents():
+                if candidate.id.startswith(document_id):
+                    doc = candidate
+                    break
+        if doc is None:
+            return f"Document with id '{document_id}' not found."
+        try:
+            text = backend_docs.read_document_text(doc)
+        except FileNotFoundError:
+            return f"The file for '{doc.name}' is missing on disk."
+        except ValueError as exc:
+            return str(exc)
+        if not text:
+            return f"'{doc.name}' contains no extractable text."
+        return f"Content of {doc.name}:\n\n{text}"
 
     @function_tool
     async def web_search(self, context: RunContext, query: str) -> str:
@@ -96,7 +186,7 @@ server = AgentServer()
 
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
-    products_db.init_db(PRODUCTS_DB_PATH)
+    # products_db.init_db(PRODUCTS_DB_PATH)
 
 
 server.setup_fnc = prewarm
@@ -158,14 +248,24 @@ async def my_agent(ctx: JobContext):
     await session.start(
         agent=Assistant(),
         room=ctx.room,
-        room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=ai_coustics.audio_enhancement(
-                    model=ai_coustics.EnhancerModel.QUAIL_VF_L
-                ),
-            ),
-        ),
+        # Noise cancellation disabled. To re-enable: uncomment the block below
+        # and re-add `room_io` and `ai_coustics` to the imports at the top of
+        # the file.
+        # room_options=room_io.RoomOptions(
+        #     audio_input=room_io.AudioInputOptions(
+        #         noise_cancellation=ai_coustics.audio_enhancement(
+        #             model=ai_coustics.EnhancerModel.QUAIL_VF_L
+        #         ),
+        #     ),
+        # ),
     )
+
+    # Register the session with the prompter and start the local UI server.
+    # Open http://localhost:7860 to feed text directly to the agent's TTS.
+    prompter.set_session(session)
+    _task = asyncio.create_task(prompter.start())
+    _task.add_done_callback(lambda t: _bg_tasks.discard(t))
+    _bg_tasks.add(_task)
 
     # Join the room and connect to the user
     await ctx.connect()
