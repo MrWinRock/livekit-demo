@@ -14,7 +14,7 @@ from livekit.agents import (
     function_tool,
     inference,
 )
-from livekit.plugins import bey, silero
+from livekit.plugins import silero, tavus
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 import backend_docs
@@ -83,6 +83,19 @@ AGENT_INSTRUCTIONS = "\n\n".join(
         _NUMBER_INSTRUCTIONS,
     ]
 )
+
+
+class _TavusGreenScreen(tavus.AvatarSession):
+    async def start(self, agent_session: AgentSession, room, **kwargs) -> None:
+        _orig = self._api.create_conversation
+
+        async def _with_greenscreen(**kw):
+            props = dict(kw.pop("properties", None) or {})
+            props["apply_greenscreen"] = True
+            return await _orig(properties=props, **kw)
+
+        self._api.create_conversation = _with_greenscreen
+        await super().start(agent_session, room, **kwargs)
 
 
 class Assistant(Agent):
@@ -232,14 +245,15 @@ async def my_agent(ctx: JobContext):
     #     llm=openai.realtime.RealtimeModel(voice="marin")
     # )
 
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    avatar = bey.AvatarSession(
-        avatar_id=os.getenv("BEY_AVATAR_ID"),
+    # Add a virtual avatar to the session.
+    # For other providers, see https://docs.livekit.io/agents/models/avatar/
+    avatar = _TavusGreenScreen(
+        replica_id=os.getenv("TAVUS_REPLICA_ID"),
+        persona_id=os.getenv("TAVUS_PERSONA_ID"),
     )
+    # To switch back to Beyond Presence, comment out the block above and use:
+    # from livekit.plugins import bey
+    # avatar = bey.AvatarSession(avatar_id=os.getenv("BEY_AVATAR_ID"))
 
     # Start the avatar and wait for it to join
     await avatar.start(session, room=ctx.room)

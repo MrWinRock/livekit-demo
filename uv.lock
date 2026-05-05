@@ -14,7 +14,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "ddgs" },
-    { name = "livekit-agents", extra = ["bey", "silero", "turn-detector"] },
+    { name = "livekit-agents", extra = ["bey", "silero", "tavus", "turn-detector"] },
     { name = "livekit-plugins-ai-coustics" },
     { name = "pypdf" },
     { name = "python-dotenv" },
@@ -31,7 +31,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9" },
     { name = "ddgs", specifier = ">=9.14.1" },
-    { name = "livekit-agents", extras = ["bey", "silero", "turn-detector"], specifier = "~=1.4" },
+    { name = "livekit-agents", extras = ["bey", "silero", "tavus", "turn-detector"], specifier = "~=1.5" },
     { name = "livekit-plugins-ai-coustics", specifier = "~=0.2" },
     { name = "pypdf", specifier = ">=6.10.2" },
     { name = "python-dotenv" },
@@ -1076,6 +1076,9 @@ bey = [
 silero = [
     { name = "livekit-plugins-silero" },
 ]
+tavus = [
+    { name = "livekit-plugins-tavus" },
+]
 turn-detector = [
     { name = "livekit-plugins-turn-detector" },
 ]
@@ -1176,6 +1179,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8f/3f/74222ff7d53bae89bb77a7df38bfba988f390901dc8e5fd5a5cecb431c76/livekit_plugins_silero-1.5.6.tar.gz", hash = "sha256:5e4c1624d471f69f520ca4cc2c73779551d61f59e8c40ad7b5ee100e9824e8fc", size = 1955612, upload-time = "2026-04-22T20:23:21.395Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4f/f8/eb350e7713030d691a76ac8ac4a48355dc21ed407f5d6fb00febbecd5628/livekit_plugins_silero-1.5.6-py3-none-any.whl", hash = "sha256:052c68dfd6687e20bf47c9a08d2e4f21b7597b68be1b5b3ba0ab69304dbe3bd8", size = 3903689, upload-time = "2026-04-22T20:23:19.607Z" },
+]
+
+[[package]]
+name = "livekit-plugins-tavus"
+version = "1.5.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/2a/1339ef265b03e5e8bcc52ab8e03cb1172cae739934bc81199c9ea6f8cfda/livekit_plugins_tavus-1.5.6.tar.gz", hash = "sha256:81cc6cf0f6db63484db00e410c58495496e2a73d71d232a9f8bd99cce2822215", size = 5659, upload-time = "2026-04-22T20:23:33.638Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/4f/098df112dfd452d02468be38c0e0e5982bc99d00d86dfa36de438318a195/livekit_plugins_tavus-1.5.6-py3-none-any.whl", hash = "sha256:a3518b9ff4b93cc55d03e452e44e16d8430f76cc8fd3e0548311345b39524a88", size = 6185, upload-time = "2026-04-22T20:23:32.573Z" },
 ]
 
 [[package]]
