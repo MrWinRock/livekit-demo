@@ -14,10 +14,13 @@ from livekit.agents import (
     function_tool,
     inference,
 )
-from livekit.plugins import silero, tavus
+from livekit.plugins import bey, silero
+
+# from livekit.plugins import tavus
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 import backend_docs
+import health_db
 
 # import products_db
 import prompter
@@ -30,6 +33,7 @@ load_dotenv(".env.local")
 
 AGENT_MODEL = "openai/gpt-5.3-chat-latest"
 # PRODUCTS_DB_PATH = Path(__file__).parent.parent / "data" / "products.db"
+HEALTH_DB_PATH = health_db.HEALTH_DB_PATH
 
 # Core persona
 _PERSONA = """
@@ -50,13 +54,39 @@ When greeting the user, ask them what they would like help with today.
 # """
 
 # Documents (uploaded PDFs / text files)
-_DOCUMENT_INSTRUCTIONS = """
-Before answering, read documents, you can choose multiple documents to read.
-When the user asks about anything company or work related — such as reports, plans, policies, procedures, announcements, or internal information — call list_documents first to check whether a relevant document exists. If one or more
-documents look relevant, tell the user which ones you found and ask which they want you to read. Only call read_document after the user has chosen. If no documents match, answer from general knowledge or use web_search.
-Also call list_documents if the user explicitly asks about uploaded files, PDFs, or what documents are available.
-After reading a document, answer the user's question grounded in that text — do not invent facts that are not in the document.
-Translate English document titles to Thai when speaking.
+# _DOCUMENT_INSTRUCTIONS = """
+# Before answering, read documents, you can choose multiple documents to read.
+# When the user asks about anything company or work related — such as reports, plans, policies, procedures, announcements, or internal information — call list_documents first to check whether a relevant document exists. If one or more
+# documents look relevant, tell the user which ones you found and ask which they want you to read. Only call read_document after the user has chosen. If no documents match, answer from general knowledge or use web_search.
+# Also call list_documents if the user explicitly asks about uploaded files, PDFs, or what documents are available.
+# After reading a document, answer the user's question grounded in that text — do not invent facts that are not in the document.
+# Translate English document titles to Thai when speaking.
+# """
+
+# Health records
+_HEALTH_INSTRUCTIONS = """
+You are also a health assistant. Follow these rules strictly:
+
+When the user asks for "the latest health", "latest health record", "ข้อมูลสุขภาพล่าสุด", or any phrasing that does NOT mention a specific person:
+- Call get_latest_health_record immediately — do NOT ask who, do NOT list users first.
+- Present the result directly.
+
+When the user asks about a specific person's health (mentions a name or user ID):
+- Call get_health_record with that name or user_id directly.
+- If you are unsure who they mean, call list_health_users first to clarify, then fetch.
+
+After fetching any health record:
+1. Review the range analysis — identify every metric labelled ABNORMAL, HIGH, LOW, ELEVATED, OBESE, OVERWEIGHT, or UNDERWEIGHT.
+2. For each concerning metric, call web_search for practical lifestyle recommendations.
+3. Report back in Thai:
+   - Greet the user by name.
+   - State the overall health picture.
+   - List normal metrics as "ผลปกติ".
+   - List abnormal metrics as "ผลผิดปกติ" with value and normal range.
+   - Give 2-3 concrete behaviour recommendations per abnormal metric.
+   - End with encouragement.
+
+Never invent health values. Always call the tool fresh — never reuse a result from earlier in this conversation.
 """
 
 # Web search
@@ -78,24 +108,25 @@ AGENT_INSTRUCTIONS = "\n\n".join(
     [
         _PERSONA,
         # _PRODUCT_INSTRUCTIONS,
-        _DOCUMENT_INSTRUCTIONS,
+        # _DOCUMENT_INSTRUCTIONS,
+        _HEALTH_INSTRUCTIONS,
         _WEB_SEARCH_INSTRUCTIONS,
         _NUMBER_INSTRUCTIONS,
     ]
 )
 
 
-class _TavusGreenScreen(tavus.AvatarSession):
-    async def start(self, agent_session: AgentSession, room, **kwargs) -> None:
-        _orig = self._api.create_conversation
-
-        async def _with_greenscreen(**kw):
-            props = dict(kw.pop("properties", None) or {})
-            props["apply_greenscreen"] = True
-            return await _orig(properties=props, **kw)
-
-        self._api.create_conversation = _with_greenscreen
-        await super().start(agent_session, room, **kwargs)
+# class _TavusGreenScreen(tavus.AvatarSession):
+#     async def start(self, agent_session: AgentSession, room, **kwargs) -> None:
+#         _orig = self._api.create_conversation
+#
+#         async def _with_greenscreen(**kw):
+#             props = dict(kw.pop("properties", None) or {})
+#             props["apply_greenscreen"] = True
+#             return await _orig(properties=props, **kw)
+#
+#         self._api.create_conversation = _with_greenscreen
+#         await super().start(agent_session, room, **kwargs)
 
 
 class Assistant(Agent):
@@ -175,6 +206,67 @@ class Assistant(Agent):
         return f"Content of {doc.name}:\n\n{text}"
 
     @function_tool
+    async def get_latest_health_record(self, context: RunContext) -> str:
+        """Return the single most-recently-updated health record across ALL users.
+
+        Use this when the user asks for "the latest health", "latest health record",
+        or any request that does not mention a specific person. Call immediately —
+        do NOT ask who or list users first. Always call fresh; never reuse a prior result.
+        """
+        logger.info("Fetching most-recent health record across all users")
+        record = await asyncio.to_thread(health_db.get_most_recent_health, HEALTH_DB_PATH)
+        if record is None:
+            return "No health records found in the database."
+        return f"HEALTH RECORD:\n{record.to_summary()}\n\nRANGE ANALYSIS:\n{record.range_analysis()}"
+
+    @function_tool
+    async def list_health_users(self, context: RunContext) -> str:
+        """List all users who have health records in the database.
+
+        Call this only when the user asks who has records, or when you need to
+        clarify which person they mean before fetching a specific record.
+        """
+        logger.info("Listing health users")
+        users = await asyncio.to_thread(health_db.list_users, HEALTH_DB_PATH)
+        if not users:
+            return "No health records found in the database."
+        lines = [
+            f"{u['name']} (user_id: {u['user_id']}, last updated: {u['last_updated']})" for u in users]
+        return "\n".join(lines)
+
+    @function_tool
+    async def get_health_record(
+        self,
+        context: RunContext,
+        name: str = "",
+        user_id: str = "",
+    ) -> str:
+        """Retrieve the most recent health record for a user directly from the database.
+
+        IMPORTANT: Always call this tool fresh whenever health data is needed.
+        Never rely on a result from an earlier call in this conversation — the
+        database may have been updated since then and that data would be stale.
+
+        Looks up by user_id first; if not found, falls back to name search.
+        Returns the raw metrics plus a range analysis classifying each value
+        as normal or abnormal against standard clinical reference ranges.
+
+        Args:
+            name: The person's name (Thai or English). Use if user_id is unknown.
+            user_id: The exact user_id string (e.g. "user_001"). Preferred over name.
+        """
+        logger.info(
+            f"Fetching health record — user_id={user_id!r} name={name!r}")
+        record = await health_db.get_latest_health_async(
+            user_id=user_id or None,
+            name=name or None,
+            db_path=HEALTH_DB_PATH,
+        )
+        if record is None:
+            return f"No health record found for user_id={user_id!r} / name={name!r}."
+        return f"HEALTH RECORD:\n{record.to_summary()}\n\nRANGE ANALYSIS:\n{record.range_analysis()}"
+
+    @function_tool
     async def web_search(self, context: RunContext, query: str) -> str:
         """Search the internet for general information about a topic, technology,
         or product type that is NOT in our shop catalog.
@@ -200,6 +292,7 @@ server = AgentServer()
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
     # products_db.init_db(PRODUCTS_DB_PATH)
+    health_db.init_db(HEALTH_DB_PATH)
 
 
 server.setup_fnc = prewarm
@@ -247,16 +340,18 @@ async def my_agent(ctx: JobContext):
 
     # Add a virtual avatar to the session.
     # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    avatar = _TavusGreenScreen(
-        replica_id=os.getenv("TAVUS_REPLICA_ID"),
-        persona_id=os.getenv("TAVUS_PERSONA_ID"),
-    )
-    # To switch back to Beyond Presence, comment out the block above and use:
-    # from livekit.plugins import bey
-    # avatar = bey.AvatarSession(avatar_id=os.getenv("BEY_AVATAR_ID"))
+    avatar = bey.AvatarSession(avatar_id=os.getenv("BEY_AVATAR_ID"))
+    # To switch to Tavus (with green screen), comment out the line above and use:
+    # avatar = _TavusGreenScreen(
+    #     replica_id=os.getenv("TAVUS_REPLICA_ID"),
+    #     persona_id=os.getenv("TAVUS_PERSONA_ID"),
+    # )
 
-    # Start the avatar and wait for it to join
-    await avatar.start(session, room=ctx.room)
+    # Start the avatar; fall back to voice-only if the provider rejects (e.g. no credits)
+    try:
+        await avatar.start(session, room=ctx.room)
+    except Exception as exc:
+        logger.warning("Avatar unavailable, continuing voice-only: %s", exc)
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(

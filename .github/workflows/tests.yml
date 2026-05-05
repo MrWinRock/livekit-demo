@@ -21,7 +21,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: "3.12"
+        python-version: "3.13"
     
     - name: Install dependencies
       run: UV_GIT_LFS=1 uv sync --dev
@@ -30,4 +30,4 @@ jobs:
     # are excluded because they require LiveKit/inference secrets and cost
     # credits per run — those should be run locally before pushing.
     - name: Run offline tests
-      run: uv run pytest tests/test_products_db.py tests/test_web_search.py -v
+      run: uv run pytest tests/test_web_search.py -v
