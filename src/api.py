@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -20,9 +21,7 @@ from health_db import (
 class CreateHealthRecordRequest(BaseModel):
     name: str = Field(min_length=1)
     gender: str = Field(min_length=1)
-    age_years: int = Field(ge=0)
-    age_months: int = Field(ge=0, le=11)
-    age_days: int = Field(ge=0, le=31)
+    date_of_birth: datetime
     user_id: str = Field(min_length=1)
     height_cm: float = Field(gt=0)
     weight_kg: float = Field(gt=0)
@@ -63,7 +62,11 @@ def create_app(*, db_path: str | Path = HEALTH_DB_PATH) -> FastAPI:
 
     @app.post("/health", status_code=status.HTTP_201_CREATED)
     def post_health(payload: CreateHealthRecordRequest) -> dict:
-        record = create_health_record(db_path=db_path, **payload.model_dump())
+        payload_data = payload.model_dump()
+        payload_data["date_of_birth"] = payload.date_of_birth.strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        record = create_health_record(db_path=db_path, **payload_data)
         return asdict(record)
 
     return app

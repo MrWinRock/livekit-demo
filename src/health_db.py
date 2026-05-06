@@ -8,6 +8,7 @@ most-recent row per user via get_latest_health().
 from __future__ import annotations
 
 import asyncio
+import calendar
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,21 +18,17 @@ from uuid import uuid4
 HEALTH_DB_PATH = Path(__file__).parent.parent / "data" / "health.db"
 
 _SEED_RECORDS: list[tuple] = [
-    # (uuid, name, gender, age_years, age_months, age_days, user_id, updated_at,
-    #  height_cm, weight_kg, bmr, bmi, hbpm, blood_pressure, o2, body_temp)
+    # (uuid, name, gender, date_of_birth, user_id, updated_at, height_cm,
+    #  weight_kg, hbpm, blood_pressure, o2, body_temp)
     (
         "a1b2c3d4-0001-0001-0001-000000000001",
         "ธีรวัฒน์ มั่นคง",
         "male",
-        35,
-        2,
-        15,
+        "1990-01-13 00:00:00",
         "user_001",
         "2026-04-28 09:15:00",
         175.0,
         85.0,
-        1868.0,
-        27.8,
         88,
         "128/84",
         97.0,
@@ -41,15 +38,11 @@ _SEED_RECORDS: list[tuple] = [
         "a1b2c3d4-0001-0001-0001-000000000002",
         "ธีรวัฒน์ มั่นคง",
         "male",
-        35,
-        3,
-        0,
+        "1990-01-31 00:00:00",
         "user_001",
         "2026-05-01 08:30:00",
         175.0,
         86.5,
-        1886.0,
-        28.2,
         92,
         "132/86",
         97.0,
@@ -59,15 +52,11 @@ _SEED_RECORDS: list[tuple] = [
         "a1b2c3d4-0002-0002-0002-000000000001",
         "สุนิสา ใจดี",
         "female",
-        28,
-        7,
-        10,
+        "1996-09-22 00:00:00",
         "user_002",
         "2026-05-02 10:00:00",
         162.0,
         55.0,
-        1337.0,
-        20.9,
         72,
         "112/74",
         93.5,
@@ -77,15 +66,11 @@ _SEED_RECORDS: list[tuple] = [
         "a1b2c3d4-0003-0003-0003-000000000001",
         "สมชาย วงศ์ใหญ่",
         "male",
-        50,
-        1,
-        5,
+        "1976-03-25 00:00:00",
         "user_003",
         "2026-04-30 07:45:00",
         168.0,
         95.0,
-        1883.0,
-        33.7,
         105,
         "145/92",
         96.0,
@@ -95,15 +80,11 @@ _SEED_RECORDS: list[tuple] = [
         "a1b2c3d4-0004-0004-0004-000000000001",
         "พิมพ์ใจ สุขสวัสดิ์",
         "female",
-        42,
-        0,
-        20,
+        "1984-04-14 00:00:00",
         "user_004",
         "2026-05-04 14:20:00",
         158.0,
         57.0,
-        1282.0,
-        22.8,
         68,
         "116/76",
         98.0,
@@ -117,9 +98,7 @@ class HealthRecord:
     uuid: str
     name: str
     gender: str
-    age_years: int
-    age_months: int
-    age_days: int
+    date_of_birth: str
     user_id: str
     updated_at: str
     height_cm: float
@@ -131,10 +110,15 @@ class HealthRecord:
     o2: float
     body_temp: float
 
+    @property
+    def age_components(self) -> tuple[int, int, int]:
+        return _calculate_age_components(self.date_of_birth, self.updated_at)
+
     def to_summary(self) -> str:
+        age_years, age_months, age_days = self.age_components
         return (
             f"Name: {self.name} | Gender: {self.gender} | "
-            f"Age: {self.age_years}y {self.age_months}m {self.age_days}d | "
+            f"Age: {age_years}y {age_months}m {age_days}d | "
             f"Height: {self.height_cm} cm | Weight: {self.weight_kg} kg | "
             f"BMI: {self.bmi:.1f} | BMR: {self.bmr:.0f} kcal/day | "
             f"Heart rate: {self.hbpm} bpm | Blood pressure: {self.blood_pressure} mmHg | "
@@ -206,19 +190,137 @@ def _connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+def _parse_timestamp(value: str) -> datetime:
+    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+
+
+def _calculate_age_components(
+    date_of_birth: str, updated_at: str | None = None
+) -> tuple[int, int, int]:
+    birth_dt = _parse_timestamp(date_of_birth)
+    reference_dt = _parse_timestamp(updated_at) if updated_at else datetime.now()
+
+    years = reference_dt.year - birth_dt.year
+    months = reference_dt.month - birth_dt.month
+    days = reference_dt.day - birth_dt.day
+
+    if reference_dt.time() < birth_dt.time():
+        days -= 1
+
+    if days < 0:
+        months -= 1
+        previous_month = reference_dt.month - 1 or 12
+        previous_year = (
+            reference_dt.year if reference_dt.month > 1 else reference_dt.year - 1
+        )
+        days += calendar.monthrange(previous_year, previous_month)[1]
+
+    if months < 0:
+        years -= 1
+        months += 12
+
+    return years, months, days
+
+
+def _calculate_age_for_bmr(date_of_birth: str, updated_at: str) -> float:
+    age_years, age_months, age_days = _calculate_age_components(
+        date_of_birth, updated_at
+    )
+    return age_years + (age_months / 12) + (age_days / 365)
+
+
+def _calculate_metrics(
+    *,
+    gender: str,
+    date_of_birth: str,
+    updated_at: str,
+    height_cm: float,
+    weight_kg: float,
+) -> tuple[float, float]:
+    age = _calculate_age_for_bmr(date_of_birth, updated_at)
+    height_m = height_cm / 100
+    bmi = weight_kg / (height_m * height_m)
+
+    gender_normalized = gender.strip().lower()
+    bmr_offset = 5 if gender_normalized == "male" else -161
+    bmr = (10 * weight_kg) + (6.25 * height_cm) - (5 * age) + bmr_offset
+
+    return round(bmi, 1), round(bmr, 1)
+
+
+def _build_seed_record(seed_record: tuple) -> tuple:
+    (
+        uuid,
+        name,
+        gender,
+        date_of_birth,
+        user_id,
+        updated_at,
+        height_cm,
+        weight_kg,
+        hbpm,
+        blood_pressure,
+        o2,
+        body_temp,
+    ) = seed_record
+
+    bmi, bmr = _calculate_metrics(
+        gender=gender,
+        date_of_birth=date_of_birth,
+        updated_at=updated_at,
+        height_cm=height_cm,
+        weight_kg=weight_kg,
+    )
+
+    return (
+        uuid,
+        name,
+        gender,
+        date_of_birth,
+        user_id,
+        updated_at,
+        height_cm,
+        weight_kg,
+        bmr,
+        bmi,
+        hbpm,
+        blood_pressure,
+        o2,
+        body_temp,
+    )
+
+
+def _schema_has_date_of_birth(conn: sqlite3.Connection) -> bool:
+    columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(health)").fetchall()
+    }
+    if not columns:
+        return False
+    return "date_of_birth" in columns and "age_years" not in columns
+
+
 def init_db(db_path: str | Path = HEALTH_DB_PATH) -> None:
     """Create the health table and seed sample data if empty. Safe to call repeatedly."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     with _connect(db_path) as conn:
+        table_exists = (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'health'"
+            ).fetchone()
+            is not None
+        )
+
+        if table_exists and not _schema_has_date_of_birth(conn):
+            conn.execute("DROP TABLE health")
+            conn.execute("DROP INDEX IF EXISTS idx_health_user_updated")
+
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS health (
                 uuid           TEXT PRIMARY KEY,
                 name           TEXT NOT NULL,
                 gender         TEXT NOT NULL,
-                age_years      INTEGER NOT NULL,
-                age_months     INTEGER NOT NULL DEFAULT 0,
-                age_days       INTEGER NOT NULL DEFAULT 0,
+                date_of_birth  TEXT NOT NULL,
                 user_id        TEXT NOT NULL,
                 updated_at     TEXT NOT NULL,
                 height_cm      REAL NOT NULL,
@@ -239,12 +341,11 @@ def init_db(db_path: str | Path = HEALTH_DB_PATH) -> None:
             conn.executemany(
                 """
                 INSERT INTO health
-                    (uuid, name, gender, age_years, age_months, age_days,
-                     user_id, updated_at, height_cm, weight_kg, bmr, bmi,
-                     hbpm, blood_pressure, o2, body_temp)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (uuid, name, gender, date_of_birth, user_id, updated_at,
+                     height_cm, weight_kg, bmr, bmi, hbpm, blood_pressure, o2, body_temp)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
-                _SEED_RECORDS,
+                [_build_seed_record(record) for record in _SEED_RECORDS],
             )
         conn.commit()
 
@@ -254,9 +355,7 @@ def _row_to_record(row: sqlite3.Row) -> HealthRecord:
         uuid=row["uuid"],
         name=row["name"],
         gender=row["gender"],
-        age_years=row["age_years"],
-        age_months=row["age_months"],
-        age_days=row["age_days"],
+        date_of_birth=row["date_of_birth"],
         user_id=row["user_id"],
         updated_at=row["updated_at"],
         height_cm=row["height_cm"],
@@ -318,7 +417,8 @@ def list_users(db_path: str | Path = HEALTH_DB_PATH) -> list[dict]:
         {"user_id": r["user_id"], "name": r["name"], "last_updated": r["last_updated"]}
         for r in rows
     ]
-    
+
+
 def get_all_health_records(db_path: str | Path = HEALTH_DB_PATH) -> list[HealthRecord]:
     """Return all health records."""
     with _connect(db_path) as conn:
@@ -330,9 +430,7 @@ def create_health_record(
     *,
     name: str,
     gender: str,
-    age_years: int,
-    age_months: int,
-    age_days: int,
+    date_of_birth: str,
     user_id: str,
     height_cm: float,
     weight_kg: float,
@@ -345,27 +443,30 @@ def create_health_record(
 ) -> HealthRecord:
     """Create and persist a health record, returning the inserted row."""
 
-    age = age_years + (age_months / 12) + (age_days / 365)
-    height_m = height_cm / 100
-    bmi = weight_kg / (height_m * height_m)
-
-    gender_normalized = gender.strip().lower()
-    bmr_offset = 5 if gender_normalized == "male" else -161
-    bmr = (10 * weight_kg) + (6.25 * height_cm) - (5 * age) + bmr_offset
+    normalized_updated_at = updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    normalized_gender = gender.strip().lower()
+    normalized_dob = _parse_timestamp(date_of_birth.strip()).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    bmi, bmr = _calculate_metrics(
+        gender=normalized_gender,
+        date_of_birth=normalized_dob,
+        updated_at=normalized_updated_at,
+        height_cm=height_cm,
+        weight_kg=weight_kg,
+    )
 
     record = HealthRecord(
         uuid=str(uuid4()),
         name=name.strip(),
-        gender=gender_normalized,
-        age_years=age_years,
-        age_months=age_months,
-        age_days=age_days,
+        gender=normalized_gender,
+        date_of_birth=normalized_dob,
         user_id=user_id.strip(),
-        updated_at=updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        updated_at=normalized_updated_at,
         height_cm=height_cm,
         weight_kg=weight_kg,
-        bmr=round(bmr, 1),
-        bmi=round(bmi, 1),
+        bmr=bmr,
+        bmi=bmi,
         hbpm=hbpm,
         blood_pressure=blood_pressure.strip(),
         o2=o2,
@@ -376,18 +477,15 @@ def create_health_record(
         conn.execute(
             """
             INSERT INTO health
-                (uuid, name, gender, age_years, age_months, age_days,
-                 user_id, updated_at, height_cm, weight_kg, bmr, bmi,
-                 hbpm, blood_pressure, o2, body_temp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (uuid, name, gender, date_of_birth, user_id, updated_at,
+                 height_cm, weight_kg, bmr, bmi, hbpm, blood_pressure, o2, body_temp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.uuid,
                 record.name,
                 record.gender,
-                record.age_years,
-                record.age_months,
-                record.age_days,
+                record.date_of_birth,
                 record.user_id,
                 record.updated_at,
                 record.height_cm,

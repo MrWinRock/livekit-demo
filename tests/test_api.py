@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ def test_get_health_returns_latest_record_for_user_id(client: TestClient) -> Non
     body = response.json()
     assert body["user_id"] == "user_001"
     assert body["updated_at"] == "2026-05-01 08:30:00"
+    assert body["date_of_birth"] == "1990-01-31 00:00:00"
     assert body["weight_kg"] == 86.5
 
 
@@ -56,9 +58,7 @@ def test_post_health_creates_new_record(client: TestClient) -> None:
     payload = {
         "name": "Test User",
         "gender": "male",
-        "age_years": 30,
-        "age_months": 0,
-        "age_days": 0,
+        "date_of_birth": "1996-05-06 00:00:00",
         "user_id": "user_999",
         "height_cm": 180.0,
         "weight_kg": 80.0,
@@ -74,6 +74,7 @@ def test_post_health_creates_new_record(client: TestClient) -> None:
     body = response.json()
     assert body["user_id"] == "user_999"
     assert body["name"] == "Test User"
+    assert body["date_of_birth"] == "1996-05-06 00:00:00"
     assert body["bmi"] == pytest.approx(24.7, rel=0, abs=0.1)
     assert body["bmr"] == pytest.approx(1780.0, rel=0, abs=0.1)
     assert body["uuid"]
@@ -82,3 +83,23 @@ def test_post_health_creates_new_record(client: TestClient) -> None:
     fetch = client.get("/health", params={"id": "user_999"})
     assert fetch.status_code == 200
     assert fetch.json()["uuid"] == body["uuid"]
+
+
+def test_init_db_uses_date_of_birth_column_instead_of_age_columns() -> None:
+    temp_dir = Path(".tmp-tests") / uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    db_path = temp_dir / "health.db"
+
+    init_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {
+            row[1]: row[2]
+            for row in conn.execute("PRAGMA table_info(health)").fetchall()
+        }
+
+    assert "date_of_birth" in columns
+    assert columns["date_of_birth"] == "TEXT"
+    assert "age_years" not in columns
+    assert "age_months" not in columns
+    assert "age_days" not in columns
