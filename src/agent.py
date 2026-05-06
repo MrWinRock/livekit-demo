@@ -30,7 +30,8 @@ _bg_tasks: set[asyncio.Task] = set()
 
 load_dotenv(".env.local")
 
-AGENT_MODEL = "openai/gpt-5.3-chat-latest"
+# AGENT_MODEL = "openai/gpt-5.3-chat-latest"
+AGENT_MODEL = "google/gemini-3.1-flash-lite-preview"
 # PRODUCTS_DB_PATH = Path(__file__).parent.parent / "data" / "products.db"
 HEALTH_DB_PATH = health_db.HEALTH_DB_PATH
 
