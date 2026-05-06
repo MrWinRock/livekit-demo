@@ -19,7 +19,6 @@ from livekit.plugins import bey, silero
 # from livekit.plugins import tavus
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-import backend_docs
 import health_db
 
 # import products_db
@@ -37,13 +36,48 @@ HEALTH_DB_PATH = health_db.HEALTH_DB_PATH
 
 # Core persona
 _PERSONA = """
-You are a helpful voice AI shop assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
+You are a helpful voice AI health assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
 Always respond in Thai language.
-You are female. Always use female polite particles: end sentences with "ค่ะ" or "นะคะ", use "ดิฉัน" or "หนู" to refer to yourself, and use "คุณ" when addressing \
+You are female. Always use female polite particles: end sentences with "ค่ะ" or "นะคะ", use "ดิฉัน" or "ฉัน" to refer to yourself, and use "คุณ" when addressing \
 the user.
 Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
 You are curious, friendly, and have a sense of humor.
 When greeting the user, ask them what they would like help with today.
+"""
+
+# Number pronunciation
+_NUMBER_INSTRUCTIONS = """
+Always speak numbers in Thai, never in English. For prices, quantities, and number of days, use natural Thai numeric words (e.g. 1290 → "หนึ่งพันสองร้อยเก้าสิบบาท", 14 days → "สิบสี่วัน"). For digit
+sequences such as document number prefixes, codes, IDs, phone numbers, or years read aloud digit by digit, pronounce each digit in Thai
+(e.g. "01" → "ศูนย์หนึ่ง", "2026" said as a year → "สองศูนย์สองหก", "0812345678" → "ศูนย์แปดหนึ่งสองสามสี่ห้าหกเจ็ดแปด").
+Never say "zero", "one", "two" in English.
+"""
+
+# Health records
+_HEALTH_INSTRUCTIONS = """
+
+STEP 1 — Say a brief Thai phrase before calling any tool so the user is not left in silence, e.g. "รอสักครู่นะคะ กำลังดึงข้อมูลสุขภาพให้ค่ะ".
+
+STEP 2 — Fetch health data (ONE call, returns instantly):
+- No specific person → call get_latest_health_record. Do NOT ask who first.
+- Specific person mentioned → call get_health_record with their name or user_id.
+- Unsure who → call list_health_users to clarify, then fetch.
+
+STEP 3 — Speak the health metrics right away in Thai:
+- Greet the user by name.
+- State each metric as ผลปกติ or ผลผิดปกติ with its value and normal range.
+
+STEP 4 — If the result says "ABNORMAL METRICS FOUND", call get_health_recommendations immediately after speaking.
+Then speak the recommendations as practical lifestyle tips per abnormal metric, and close with encouragement.
+If the result says "All metrics normal", congratulate the user — do NOT call get_health_recommendations.
+
+Never invent health values. Always call the fetch tool fresh — never reuse a result from earlier in this conversation.
+"""
+
+# Web search
+_WEB_SEARCH_INSTRUCTIONS = """
+For general questions about technology, how something works, or any topic not covered by other tools, use the web_search tool.
+Always say a brief Thai phrase before calling web_search so the user is not left in silence (e.g. "ขอดูข้อมูลก่อนนะคะ"). Say it BEFORE the tool call, not after.
 """
 
 # Product catalog
@@ -63,55 +97,14 @@ When greeting the user, ask them what they would like help with today.
 # Translate English document titles to Thai when speaking.
 # """
 
-# Health records
-_HEALTH_INSTRUCTIONS = """
-You are also a health assistant. Follow these rules strictly:
-
-When the user asks for "the latest health", "latest health record", "ข้อมูลสุขภาพล่าสุด", or any phrasing that does NOT mention a specific person:
-- Call get_latest_health_record immediately — do NOT ask who, do NOT list users first.
-- Present the result directly.
-
-When the user asks about a specific person's health (mentions a name or user ID):
-- Call get_health_record with that name or user_id directly.
-- If you are unsure who they mean, call list_health_users first to clarify, then fetch.
-
-After fetching any health record:
-1. Review the range analysis — identify every metric labelled ABNORMAL, HIGH, LOW, ELEVATED, OBESE, OVERWEIGHT, or UNDERWEIGHT.
-2. For each concerning metric, call web_search for practical lifestyle recommendations.
-3. Report back in Thai:
-   - Greet the user by name.
-   - State the overall health picture.
-   - List normal metrics as "ผลปกติ".
-   - List abnormal metrics as "ผลผิดปกติ" with value and normal range.
-   - Give 2-3 concrete behaviour recommendations per abnormal metric.
-   - End with encouragement.
-
-Never invent health values. Always call the tool fresh — never reuse a result from earlier in this conversation.
-"""
-
-# Web search
-_WEB_SEARCH_INSTRUCTIONS = """
-For general questions about a technology, what a product type does, how something works, or any topic outside our shop catalog, use the web_search tool.
-Do not use web_search for items already in our catalog — use search_products for those.
-Web search takes a couple of seconds, so when you decide to use it, briefly tell the user you are looking it up (e.g. "ขอดูข้อมูลก่อนนะคะ").
-"""
-
-# Number pronunciation
-_NUMBER_INSTRUCTIONS = """
-Always speak numbers in Thai, never in English. For prices, quantities, and number of days, use natural Thai numeric words (e.g. 1290 → "หนึ่งพันสองร้อยเก้าสิบบาท", 14 days → "สิบสี่วัน"). For digit
-sequences such as document number prefixes, codes, IDs, phone numbers, or years read aloud digit by digit, pronounce each digit in Thai
-(e.g. "01" → "ศูนย์หนึ่ง", "2026" said as a year → "สองศูนย์สองหก", "0812345678" → "ศูนย์แปดหนึ่งสองสามสี่ห้าหกเจ็ดแปด").
-Never say "zero", "one", "two" in English.
-"""
-
 AGENT_INSTRUCTIONS = "\n\n".join(
     [
         _PERSONA,
-        # _PRODUCT_INSTRUCTIONS,
-        # _DOCUMENT_INSTRUCTIONS,
+        _NUMBER_INSTRUCTIONS,
         _HEALTH_INSTRUCTIONS,
         _WEB_SEARCH_INSTRUCTIONS,
-        _NUMBER_INSTRUCTIONS,
+        # _PRODUCT_INSTRUCTIONS,
+        # _DOCUMENT_INSTRUCTIONS,
     ]
 )
 
@@ -127,6 +120,28 @@ AGENT_INSTRUCTIONS = "\n\n".join(
 #
 #         self._api.create_conversation = _with_greenscreen
 #         await super().start(agent_session, room, **kwargs)
+
+
+def _build_health_summary(record: health_db.HealthRecord) -> tuple[str, str | None]:
+    """Return (report_text, search_query_or_None). Fast — no I/O."""
+    analysis = record.range_analysis()
+    concerns: list[str] = []
+    for line in analysis.splitlines():
+        if ": NORMAL" not in line:
+            metric = line.split(":")[0].strip()
+            label = (
+                line.split(": ", 1)[1].split(" (")[0].strip() if ": " in line else ""
+            )
+            if metric and label:
+                concerns.append(f"{metric} {label}")
+
+    report = f"HEALTH RECORD:\n{record.to_summary()}\n\nRANGE ANALYSIS:\n{analysis}"
+    query = (
+        ("health lifestyle recommendations for " + ", ".join(concerns))
+        if concerns
+        else None
+    )
+    return report, query
 
 
 class Assistant(Agent):
@@ -160,64 +175,77 @@ class Assistant(Agent):
     #     products = products_db.list_all_products(PRODUCTS_DB_PATH)
     #     return "\n".join(p.to_summary() for p in products)
 
-    @function_tool
-    async def list_documents(self, context: RunContext) -> str:
-        """List the uploaded documents (PDFs, text files) in the knowledge base.
+    # @function_tool
+    # async def list_documents(self, context: RunContext) -> str:
+    #     """List the uploaded documents (PDFs, text files) in the knowledge base.
 
-        Use this when the user asks "what documents do we have?", "what files are
-        uploaded?", or asks any question about uploaded files. Always call this
-        first and present the names back to the user before calling read_document.
-        """
-        logger.info("Listing backend documents")
-        docs = backend_docs.list_ready_documents()
-        if not docs:
-            return "No documents have been uploaded yet."
-        return "\n".join(d.to_summary() for d in docs)
+    #     Use this when the user asks "what documents do we have?", "what files are
+    #     uploaded?", or asks any question about uploaded files. Always call this
+    #     first and present the names back to the user before calling read_document.
+    #     """
+    #     logger.info("Listing backend documents")
+    #     docs = backend_docs.list_ready_documents()
+    #     if not docs:
+    #         return "No documents have been uploaded yet."
+    #     return "\n".join(d.to_summary() for d in docs)
 
-    @function_tool
-    async def read_document(self, context: RunContext, document_id: str) -> str:
-        """Read the text content of a specific uploaded document.
+    # @function_tool
+    # async def read_document(self, context: RunContext, document_id: str) -> str:
+    #     """Read the text content of a specific uploaded document.
 
-        Only call this AFTER list_documents and AFTER the user has chosen
-        which document to read. The content is truncated for long files;
-        the truncation note is included so you can tell the user.
+    #     Only call this AFTER list_documents and AFTER the user has chosen
+    #     which document to read. The content is truncated for long files;
+    #     the truncation note is included so you can tell the user.
 
-        Args:
-            document_id: The id from list_documents (e.g. "f1c69f7a-..."),
-                or a partial-id prefix that uniquely identifies the document.
-        """
-        logger.info(f"Reading document: {document_id}")
-        doc = backend_docs.get_document(document_id)
-        if doc is None:
-            for candidate in backend_docs.list_ready_documents():
-                if candidate.id.startswith(document_id):
-                    doc = candidate
-                    break
-        if doc is None:
-            return f"Document with id '{document_id}' not found."
-        try:
-            text = backend_docs.read_document_text(doc)
-        except FileNotFoundError:
-            return f"The file for '{doc.name}' is missing on disk."
-        except ValueError as exc:
-            return str(exc)
-        if not text:
-            return f"'{doc.name}' contains no extractable text."
-        return f"Content of {doc.name}:\n\n{text}"
+    #     Args:
+    #         document_id: The id from list_documents (e.g. "f1c69f7a-..."),
+    #             or a partial-id prefix that uniquely identifies the document.
+    #     """
+    #     logger.info(f"Reading document: {document_id}")
+    #     doc = backend_docs.get_document(document_id)
+    #     if doc is None:
+    #         for candidate in backend_docs.list_ready_documents():
+    #             if candidate.id.startswith(document_id):
+    #                 doc = candidate
+    #                 break
+    #     if doc is None:
+    #         return f"Document with id '{document_id}' not found."
+    #     try:
+    #         text = backend_docs.read_document_text(doc)
+    #     except FileNotFoundError:
+    #         return f"The file for '{doc.name}' is missing on disk."
+    #     except ValueError as exc:
+    #         return str(exc)
+    #     if not text:
+    #         return f"'{doc.name}' contains no extractable text."
+    #     return f"Content of {doc.name}:\n\n{text}"
 
     @function_tool
     async def get_latest_health_record(self, context: RunContext) -> str:
-        """Return the single most-recently-updated health record across ALL users.
+        """Return the most-recently-updated health record across ALL users.
 
-        Use this when the user asks for "the latest health", "latest health record",
-        or any request that does not mention a specific person. Call immediately —
-        do NOT ask who or list users first. Always call fresh; never reuse a prior result.
+        Use when the user asks for "the latest health" without naming a specific person.
+        Call immediately — do NOT ask who or list users first. Always call fresh.
+        After this returns, speak the health data, then call get_health_recommendations
+        if the result says there are abnormal metrics.
         """
         logger.info("Fetching most-recent health record across all users")
-        record = await asyncio.to_thread(health_db.get_most_recent_health, HEALTH_DB_PATH)
+        record = await asyncio.to_thread(
+            health_db.get_most_recent_health, HEALTH_DB_PATH
+        )
         if record is None:
             return "No health records found in the database."
-        return f"HEALTH RECORD:\n{record.to_summary()}\n\nRANGE ANALYSIS:\n{record.range_analysis()}"
+        report, query = _build_health_summary(record)
+        if query:
+            logger.info(f"Starting background health search: {query}")
+            context.session.userdata["_health_search"] = asyncio.create_task(
+                web_search.get_default_provider().search(query, max_results=3)
+            )
+            return (
+                report
+                + "\n\nABNORMAL METRICS FOUND: call get_health_recommendations next."
+            )
+        return report + "\n\nAll metrics normal."
 
     @function_tool
     async def list_health_users(self, context: RunContext) -> str:
@@ -231,7 +259,9 @@ class Assistant(Agent):
         if not users:
             return "No health records found in the database."
         lines = [
-            f"{u['name']} (user_id: {u['user_id']}, last updated: {u['last_updated']})" for u in users]
+            f"{u['name']} (user_id: {u['user_id']}, last updated: {u['last_updated']})"
+            for u in users
+        ]
         return "\n".join(lines)
 
     @function_tool
@@ -241,22 +271,18 @@ class Assistant(Agent):
         name: str = "",
         user_id: str = "",
     ) -> str:
-        """Retrieve the most recent health record for a user directly from the database.
+        """Retrieve the most recent health record for a specific user.
 
-        IMPORTANT: Always call this tool fresh whenever health data is needed.
-        Never rely on a result from an earlier call in this conversation — the
-        database may have been updated since then and that data would be stale.
-
-        Looks up by user_id first; if not found, falls back to name search.
-        Returns the raw metrics plus a range analysis classifying each value
-        as normal or abnormal against standard clinical reference ranges.
+        Looks up by user_id first; falls back to name search.
+        After this returns, speak the health data, then call get_health_recommendations
+        if the result says there are abnormal metrics.
+        Always call fresh — never reuse a prior result.
 
         Args:
             name: The person's name (Thai or English). Use if user_id is unknown.
             user_id: The exact user_id string (e.g. "user_001"). Preferred over name.
         """
-        logger.info(
-            f"Fetching health record — user_id={user_id!r} name={name!r}")
+        logger.info(f"Fetching health record — user_id={user_id!r} name={name!r}")
         record = await health_db.get_latest_health_async(
             user_id=user_id or None,
             name=name or None,
@@ -264,7 +290,37 @@ class Assistant(Agent):
         )
         if record is None:
             return f"No health record found for user_id={user_id!r} / name={name!r}."
-        return f"HEALTH RECORD:\n{record.to_summary()}\n\nRANGE ANALYSIS:\n{record.range_analysis()}"
+        report, query = _build_health_summary(record)
+        if query:
+            logger.info(f"Starting background health search: {query}")
+            context.session.userdata["_health_search"] = asyncio.create_task(
+                web_search.get_default_provider().search(query, max_results=3)
+            )
+            return (
+                report
+                + "\n\nABNORMAL METRICS FOUND: call get_health_recommendations next."
+            )
+        return report + "\n\nAll metrics normal."
+
+    @function_tool
+    async def get_health_recommendations(self, context: RunContext) -> str:
+        """Retrieve lifestyle recommendations for the abnormal metrics from the last health fetch.
+
+        Call this immediately after speaking the health data when the previous health tool
+        result said "ABNORMAL METRICS FOUND". The web search runs in background while you
+        speak, so this call is usually near-instant.
+        """
+        task: asyncio.Task | None = context.session.userdata.pop("_health_search", None)
+        if task is None:
+            return "No pending health recommendations. Call get_health_record first."
+        try:
+            results = await task
+        except Exception as exc:
+            logger.warning("Background health search failed: %s", exc)
+            return "Web search failed — please give general advice based on the range analysis."
+        if not results:
+            return "No web results found."
+        return "\n".join(r.to_summary() for r in results)
 
     @function_tool
     async def web_search(self, context: RunContext, query: str) -> str:
@@ -326,6 +382,7 @@ async def my_agent(ctx: JobContext):
         # allow the LLM to generate a response while waiting for the end of turn
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
+        userdata={},
     )
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.

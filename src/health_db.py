@@ -21,51 +21,91 @@ _SEED_RECORDS: list[tuple] = [
         "a1b2c3d4-0001-0001-0001-000000000001",
         "ธีรวัฒน์ มั่นคง",
         "male",
-        35, 2, 15,
+        35,
+        2,
+        15,
         "user_001",
         "2026-04-28 09:15:00",
-        175.0, 85.0, 1868.0, 27.8,
-        88, "128/84", 97.0, 36.8,
+        175.0,
+        85.0,
+        1868.0,
+        27.8,
+        88,
+        "128/84",
+        97.0,
+        36.8,
     ),
     (
         "a1b2c3d4-0001-0001-0001-000000000002",
         "ธีรวัฒน์ มั่นคง",
         "male",
-        35, 3, 0,
+        35,
+        3,
+        0,
         "user_001",
         "2026-05-01 08:30:00",
-        175.0, 86.5, 1886.0, 28.2,
-        92, "132/86", 97.0, 36.9,
+        175.0,
+        86.5,
+        1886.0,
+        28.2,
+        92,
+        "132/86",
+        97.0,
+        36.9,
     ),
     (
         "a1b2c3d4-0002-0002-0002-000000000001",
         "สุนิสา ใจดี",
         "female",
-        28, 7, 10,
+        28,
+        7,
+        10,
         "user_002",
         "2026-05-02 10:00:00",
-        162.0, 55.0, 1337.0, 20.9,
-        72, "112/74", 93.5, 36.5,
+        162.0,
+        55.0,
+        1337.0,
+        20.9,
+        72,
+        "112/74",
+        93.5,
+        36.5,
     ),
     (
         "a1b2c3d4-0003-0003-0003-000000000001",
         "สมชาย วงศ์ใหญ่",
         "male",
-        50, 1, 5,
+        50,
+        1,
+        5,
         "user_003",
         "2026-04-30 07:45:00",
-        168.0, 95.0, 1883.0, 33.7,
-        105, "145/92", 96.0, 37.1,
+        168.0,
+        95.0,
+        1883.0,
+        33.7,
+        105,
+        "145/92",
+        96.0,
+        37.1,
     ),
     (
         "a1b2c3d4-0004-0004-0004-000000000001",
         "พิมพ์ใจ สุขสวัสดิ์",
         "female",
-        42, 0, 20,
+        42,
+        0,
+        20,
         "user_004",
         "2026-05-04 14:20:00",
-        158.0, 57.0, 1282.0, 22.8,
-        68, "116/76", 98.0, 36.6,
+        158.0,
+        57.0,
+        1282.0,
+        22.8,
+        68,
+        "116/76",
+        98.0,
+        36.6,
     ),
 ]
 
@@ -228,7 +268,9 @@ def _row_to_record(row: sqlite3.Row) -> HealthRecord:
     )
 
 
-def get_latest_health(user_id: str, db_path: str | Path = HEALTH_DB_PATH) -> HealthRecord | None:
+def get_latest_health(
+    user_id: str, db_path: str | Path = HEALTH_DB_PATH
+) -> HealthRecord | None:
     """Return the most-recent health record for the given user_id."""
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -238,7 +280,9 @@ def get_latest_health(user_id: str, db_path: str | Path = HEALTH_DB_PATH) -> Hea
     return _row_to_record(row) if row else None
 
 
-def get_latest_health_by_name(name: str, db_path: str | Path = HEALTH_DB_PATH) -> HealthRecord | None:
+def get_latest_health_by_name(
+    name: str, db_path: str | Path = HEALTH_DB_PATH
+) -> HealthRecord | None:
     """Return the most-recent health record matching the full name (case-insensitive)."""
     with _connect(db_path) as conn:
         row = conn.execute(
@@ -280,6 +324,7 @@ async def get_latest_health_async(
     db_path: str | Path = HEALTH_DB_PATH,
 ) -> HealthRecord | None:
     """Async wrapper — looks up by user_id first, then by name."""
+
     def _query() -> HealthRecord | None:
         if user_id:
             rec = get_latest_health(user_id, db_path)
