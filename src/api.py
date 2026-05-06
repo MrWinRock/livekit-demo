@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from health_db import (
@@ -35,6 +36,14 @@ def create_app(*, db_path: str | Path = HEALTH_DB_PATH) -> FastAPI:
     init_db(db_path)
 
     app = FastAPI(title="Health API")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health")
     def get_health(
