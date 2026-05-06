@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 HEALTH_DB_PATH = Path(__file__).parent.parent / "data" / "health.db"
 
@@ -316,6 +318,91 @@ def list_users(db_path: str | Path = HEALTH_DB_PATH) -> list[dict]:
         {"user_id": r["user_id"], "name": r["name"], "last_updated": r["last_updated"]}
         for r in rows
     ]
+    
+def get_all_health_records(db_path: str | Path = HEALTH_DB_PATH) -> list[HealthRecord]:
+    """Return all health records."""
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT * FROM health").fetchall()
+    return [_row_to_record(row) for row in rows]
+
+
+def create_health_record(
+    *,
+    name: str,
+    gender: str,
+    age_years: int,
+    age_months: int,
+    age_days: int,
+    user_id: str,
+    height_cm: float,
+    weight_kg: float,
+    hbpm: int,
+    blood_pressure: str,
+    o2: float,
+    body_temp: float,
+    updated_at: str | None = None,
+    db_path: str | Path = HEALTH_DB_PATH,
+) -> HealthRecord:
+    """Create and persist a health record, returning the inserted row."""
+
+    age = age_years + (age_months / 12) + (age_days / 365)
+    height_m = height_cm / 100
+    bmi = weight_kg / (height_m * height_m)
+
+    gender_normalized = gender.strip().lower()
+    bmr_offset = 5 if gender_normalized == "male" else -161
+    bmr = (10 * weight_kg) + (6.25 * height_cm) - (5 * age) + bmr_offset
+
+    record = HealthRecord(
+        uuid=str(uuid4()),
+        name=name.strip(),
+        gender=gender_normalized,
+        age_years=age_years,
+        age_months=age_months,
+        age_days=age_days,
+        user_id=user_id.strip(),
+        updated_at=updated_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        height_cm=height_cm,
+        weight_kg=weight_kg,
+        bmr=round(bmr, 1),
+        bmi=round(bmi, 1),
+        hbpm=hbpm,
+        blood_pressure=blood_pressure.strip(),
+        o2=o2,
+        body_temp=body_temp,
+    )
+
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO health
+                (uuid, name, gender, age_years, age_months, age_days,
+                 user_id, updated_at, height_cm, weight_kg, bmr, bmi,
+                 hbpm, blood_pressure, o2, body_temp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.uuid,
+                record.name,
+                record.gender,
+                record.age_years,
+                record.age_months,
+                record.age_days,
+                record.user_id,
+                record.updated_at,
+                record.height_cm,
+                record.weight_kg,
+                record.bmr,
+                record.bmi,
+                record.hbpm,
+                record.blood_pressure,
+                record.o2,
+                record.body_temp,
+            ),
+        )
+        conn.commit()
+
+    return record
 
 
 async def get_latest_health_async(

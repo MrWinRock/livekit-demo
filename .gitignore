@@ -34,3 +34,6 @@ data/
 
 # GitHub CLI
 .github/personal-instructions.md
+
+# temp
+.tmp-tests/
