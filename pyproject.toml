@@ -14,8 +14,13 @@ dependencies = [
     "fastapi>=0.115",
     "livekit-agents[bey,silero,tavus,turn-detector]~=1.5",
     "livekit-plugins-ai-coustics~=0.2",
+    "livekit-plugins-cartesia>=1.5.6",
+    "livekit-plugins-deepgram>=1.5.6",
+    "livekit-plugins-google>=1.5.6",
+    "livekit-plugins-openai>=1.5.6",
     "pypdf>=6.10.2",
     "python-dotenv",
+    "tavily>=1.1.0",
     "uvicorn>=0.32",
 ]
 

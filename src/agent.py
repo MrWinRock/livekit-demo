@@ -14,7 +14,7 @@ from livekit.agents import (
     function_tool,
     inference,
 )
-from livekit.plugins import bey, silero
+from livekit.plugins import bey, cartesia, deepgram, google, openai, silero
 
 # from livekit.plugins import tavus
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -35,15 +35,93 @@ AGENT_MODEL = "google/gemini-3.1-flash-lite-preview"
 # PRODUCTS_DB_PATH = Path(__file__).parent.parent / "data" / "products.db"
 HEALTH_DB_PATH = health_db.HEALTH_DB_PATH
 
+# Voice settings shared between Cartesia direct plugin and LiveKit Inference TTS.
+_TTS_VOICE_ID = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
+_TTS_EMOTION = "warm, friendly, conversational, gentle"
+_TTS_SPEED = "normal"
+
+# Direct-plugin model defaults (used only when the corresponding API key is set).
+_DIRECT_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+_DIRECT_OPENAI_MODEL = "gpt-4o-mini"
+_DIRECT_STT_MODEL = "nova-2"
+
+
+def _build_llm():
+    """LLM provider selection by env key. Priority: Google → OpenAI → LiveKit Inference."""
+    if os.getenv("GOOGLE_API_KEY"):
+        logger.info("LLM: using direct Google plugin (model=%s)", _DIRECT_GEMINI_MODEL)
+        return google.LLM(model=_DIRECT_GEMINI_MODEL)
+    if os.getenv("OPENAI_API_KEY"):
+        logger.info("LLM: using direct OpenAI plugin (model=%s)", _DIRECT_OPENAI_MODEL)
+        return openai.LLM(model=_DIRECT_OPENAI_MODEL)
+    logger.info("LLM: using LiveKit Inference (model=%s)", AGENT_MODEL)
+    return inference.LLM(model=AGENT_MODEL)
+
+
+def _build_stt():
+    """Direct Deepgram plugin if DEEPGRAM_API_KEY is set, else LiveKit Inference."""
+    if os.getenv("DEEPGRAM_API_KEY"):
+        logger.info("STT: using direct Deepgram plugin (model=%s)", _DIRECT_STT_MODEL)
+        return deepgram.STT(model=_DIRECT_STT_MODEL, language="th")
+    logger.info("STT: using LiveKit Inference (deepgram/nova-2)")
+    return inference.STT(model="deepgram/nova-2", language="th")
+
+
+def _build_tts():
+    """Direct Cartesia plugin if CARTESIA_API_KEY is set, else LiveKit Inference."""
+    if os.getenv("CARTESIA_API_KEY"):
+        logger.info("TTS: using direct Cartesia plugin (sonic-3)")
+        return cartesia.TTS(
+            model="sonic-3",
+            voice=_TTS_VOICE_ID,
+            language="th",
+            emotion=_TTS_EMOTION,
+            speed=_TTS_SPEED,
+        )
+    logger.info("TTS: using LiveKit Inference (cartesia/sonic-3)")
+    return inference.TTS(
+        model="cartesia/sonic-3",
+        voice=_TTS_VOICE_ID,
+        extra_kwargs={"emotion": _TTS_EMOTION, "speed": _TTS_SPEED},
+    )
+
+
 # Core persona
 _PERSONA = """
 You are a helpful voice AI health assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
 Always respond in Thai language.
 You are female. Always use female polite particles: end sentences with "ค่ะ" or "นะคะ", use "ดิฉัน" or "ฉัน" to refer to yourself, and use "คุณ" when addressing \
 the user.
-Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
+Keep responses concise and conversational. Do NOT use markdown, asterisks, bullet points, code blocks, or emojis — but DO use natural punctuation \
+(commas, periods, ellipses, exclamation, question marks) since these control the pacing and intonation of your spoken voice.
 You are curious, friendly, and have a sense of humor.
 When greeting the user, ask them what they would like help with today.
+"""
+
+_SPOKEN_STYLE_INSTRUCTIONS = """
+You are speaking, not writing. Make every reply sound like a real person talking, not text being read aloud.
+
+FILLER WORDS — sprinkle naturally (do not overuse): "อืม...", "เอ่อ...", "แบบว่า", "ก็นะ", "เอาเป็นว่า", "นะคะ", "ค่ะ".
+Use them where a real person would pause to think, soften a statement, or transition between ideas.
+
+PUNCTUATION CONTROLS YOUR BREATH AND PITCH — the TTS reads these as pacing cues:
+- Comma ( , ) = short breath / mini-pause.
+- Period ( . ) = full stop, voice drops, longer pause.
+- Ellipsis ( ... ) = trailing thought, hesitation, drawn-out word.
+- Exclamation ( ! ) = louder, brighter, more energy.
+- Question ( ? ) = rising pitch at the end.
+Use them deliberately. A response with no commas sounds robotic and out of breath.
+
+PERFORMANCE TAGS — use sparingly (at most one per reply, only when it fits the moment):
+- [breath] — soft inhale, good before delivering important information.
+- [sighs] — gentle sigh, good for empathy or slight reluctance.
+- [laughs] — light laugh, good for warm or playful moments.
+- [whisper] ... [/whisper] — softer voice for confidential or intimate lines.
+Place tags inside the sentence, e.g. "เอ่อ [breath] ตอนนี้ค่าน้ำตาลของคุณค่อนข้างสูงนะคะ".
+
+SHORT CHUNKS — prefer two or three short sentences over one long one. Short sentences let the voice breathe and feel less rushed.
+
+AVOID: long monotone paragraphs, commas every ten words, robotic listing ("หนึ่ง สอง สาม"), or stacking fillers ("อืม เอ่อ แบบว่า") in a row.
 """
 
 # Number pronunciation
@@ -101,6 +179,7 @@ Always say a brief Thai phrase before calling web_search so the user is not left
 AGENT_INSTRUCTIONS = "\n\n".join(
     [
         _PERSONA,
+        _SPOKEN_STYLE_INSTRUCTIONS,
         _NUMBER_INSTRUCTIONS,
         _HEALTH_INSTRUCTIONS,
         _WEB_SEARCH_INSTRUCTIONS,
@@ -363,19 +442,12 @@ async def my_agent(ctx: JobContext):
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, Deepgram, and the LiveKit turn detector
+    # Voice AI pipeline. Each component picks the direct provider plugin if its
+    # API key is set, otherwise falls back to LiveKit Inference. See _build_*.
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt=inference.STT(model="deepgram/nova-2", language="th"),
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
-        llm=inference.LLM(model=AGENT_MODEL),
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts=inference.TTS(
-            model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-        ),
+        stt=_build_stt(),
+        llm=_build_llm(),
+        tts=_build_tts(),
         # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
         # See more at https://docs.livekit.io/agents/build/turns
         turn_detection=MultilingualModel(),
