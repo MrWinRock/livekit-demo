@@ -20,6 +20,7 @@ venv/
 # Caches and test output
 .cache/
 .pytest_cache/
+pytest-cache-files-*
 .ruff_cache/
 coverage/
 
@@ -47,6 +48,12 @@ coverage/
 README.md
 CONTRIBUTING.md
 LICENSE
+
+# Type checker config (references local OmniVoice path, not needed in Docker)
+pyrightconfig.json
+
+# Database files — mounted as a Docker volume at runtime instead
+data/*.db
 
 # Coding agent files
 .claude/

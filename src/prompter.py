@@ -244,12 +244,13 @@ async def start() -> None:
         return
     _started = True
     port = int(os.getenv("PROMPTER_PORT", "7860"))
+    host = os.getenv("PROMPTER_HOST", "localhost")
     app = web.Application()
     app.router.add_get("/", _index)
     app.router.add_get("/health", _health)
     app.router.add_post("/speak", _speak)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "localhost", port)
+    site = web.TCPSite(runner, host, port)
     await site.start()
-    logger.info("Prompter UI → http://localhost:%d", port)
+    logger.info("Prompter UI → http://%s:%d", host, port)

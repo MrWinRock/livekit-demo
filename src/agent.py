@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import os
 
@@ -20,7 +21,6 @@ from livekit.plugins import bey, cartesia, deepgram, google, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 import health_db
-
 # import products_db
 import prompter
 import web_search
@@ -37,7 +37,8 @@ HEALTH_DB_PATH = health_db.HEALTH_DB_PATH
 
 # Voice settings shared between Cartesia direct plugin and LiveKit Inference TTS.
 _TTS_VOICE_ID = "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-_TTS_EMOTION = "warm, friendly, conversational, gentle"
+# Must be a single value from Cartesia's TTSVoiceEmotion enum (capitalised).
+_TTS_EMOTION = "Affectionate"
 _TTS_SPEED = "normal"
 
 # Direct-plugin model defaults (used only when the corresponding API key is set).
@@ -68,16 +69,32 @@ def _build_stt():
 
 
 def _build_tts():
-    """Direct Cartesia plugin if CARTESIA_API_KEY is set, else LiveKit Inference."""
-    if os.getenv("CARTESIA_API_KEY"):
-        logger.info("TTS: using direct Cartesia plugin (sonic-3)")
-        return cartesia.TTS(
-            model="sonic-3",
-            voice=_TTS_VOICE_ID,
-            language="th",
-            emotion=_TTS_EMOTION,
-            speed=_TTS_SPEED,
+    """OmniVoice if OMNIVOICE_MODEL is set, direct Cartesia if CARTESIA_API_KEY is set, else LiveKit Inference."""
+    if os.getenv("OMNIVOICE_MODEL"):
+        from omnivoice_tts import OmniVoiceTTS
+
+        model_path = os.getenv("OMNIVOICE_MODEL")
+        logger.info("TTS: using OmniVoice (%s)", model_path)
+        speed_str = os.getenv("OMNIVOICE_SPEED")
+        steps_str = os.getenv("OMNIVOICE_STEPS")
+        return OmniVoiceTTS(
+            model_path=model_path,
+            language=os.getenv("OMNIVOICE_LANGUAGE", "Thai"),
+            instruct=os.getenv("OMNIVOICE_INSTRUCT") or None,
+            ref_audio=os.getenv("OMNIVOICE_REF_AUDIO") or None,
+            ref_text=os.getenv("OMNIVOICE_REF_TEXT") or None,
+            speed=float(speed_str) if speed_str else None,
+            num_step=int(steps_str) if steps_str else 16,
         )
+    # if os.getenv("CARTESIA_API_KEY"):
+    #     logger.info("TTS: using direct Cartesia plugin (sonic-3)")
+    #     return cartesia.TTS(
+    #         model="sonic-3",
+    #         voice=_TTS_VOICE_ID,
+    #         language="th",
+    #         emotion=_TTS_EMOTION,
+    #         speed=_TTS_SPEED,
+        # )
     logger.info("TTS: using LiveKit Inference (cartesia/sonic-3)")
     return inference.TTS(
         model="cartesia/sonic-3",
@@ -155,8 +172,10 @@ Never invent health values. Always call the fetch tool fresh — never reuse a r
 
 # Web search
 _WEB_SEARCH_INSTRUCTIONS = """
-For general questions about technology, how something works, or any topic not covered by other tools, use the web_search tool.
-Always say a brief Thai phrase before calling web_search so the user is not left in silence (e.g. "ขอดูข้อมูลก่อนนะคะ"). Say it BEFORE the tool call, not after.
+For general questions, fact-checking, current events, or any topic not covered by the uploaded documents, use the web_search tool.
+Always say a brief Thai phrase before calling web_search so the user is not left in silence (e.g. "ขอค้นหาข้อมูลจากอินเทอร์เน็ตสักครู่นะคะ" or "ขอดูข้อมูลก่อนนะคะ"). Say it BEFORE the tool call, not after.
+After receiving the search results, summarize the answer concisely and naturally in Thai.
+The results include a "today" date header — use it to judge whether individual results are recent or outdated. For time-sensitive topics, prefer newer sources. If a result shows a "[date]" tag, treat older results with appropriate skepticism.
 """
 
 # Product catalog
@@ -404,22 +423,24 @@ class Assistant(Agent):
 
     @function_tool
     async def web_search(self, context: RunContext, query: str) -> str:
-        """Search the internet for general information about a topic, technology,
-        or product type that is NOT in our shop catalog.
+        """Search the internet for general information, current events, or fact-checking.
 
-        Use this for questions like "what is USB-C?", "how does noise cancellation work?",
-        or "what is the difference between SSD and HDD?". Do not use this for items
-        in our catalog — use search_products for those.
+        Use this for questions that require external knowledge from the internet, like "what is USB-C?",
+        "how does noise cancellation work?", or "what is the capital of France?".
+        Do not use this for internal company files or uploaded PDFs — use search_documents for those.
+        Results include publication dates where available so you can judge freshness.
 
         Args:
-            query: English search query.
+            query: English search query (translate from Thai to English for better search results).
         """
         logger.info(f"Web searching: {query}")
         provider = web_search.get_default_provider()
-        results = await provider.search(query, max_results=3)
+        results = await provider.search(query, max_results=5)
         if not results:
             return f"No web results found for '{query}'."
-        return "\n".join(r.to_summary() for r in results)
+        today = datetime.date.today().isoformat()
+        header = f"[Today: {today}]\n"
+        return header + "\n".join(r.to_summary() for r in results)
 
 
 server = AgentServer()
@@ -468,20 +489,21 @@ async def my_agent(ctx: JobContext):
     #     llm=openai.realtime.RealtimeModel(voice="marin")
     # )
 
-    # Add a virtual avatar to the session.
+    # Add a virtual avatar to the session (skipped in console/fake-job mode).
     # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    avatar = bey.AvatarSession(avatar_id=os.getenv("BEY_AVATAR_ID"))
-    # To switch to Tavus (with green screen), comment out the line above and use:
-    # avatar = _TavusGreenScreen(
-    #     replica_id=os.getenv("TAVUS_REPLICA_ID"),
-    #     persona_id=os.getenv("TAVUS_PERSONA_ID"),
-    # )
+    if not ctx.is_fake_job():
+        avatar = bey.AvatarSession(avatar_id=os.getenv("BEY_AVATAR_ID"))
+        # To switch to Tavus (with green screen), comment out the line above and use:
+        # avatar = _TavusGreenScreen(
+        #     replica_id=os.getenv("TAVUS_REPLICA_ID"),
+        #     persona_id=os.getenv("TAVUS_PERSONA_ID"),
+        # )
 
-    # Start the avatar; fall back to voice-only if the provider rejects (e.g. no credits)
-    try:
-        await avatar.start(session, room=ctx.room)
-    except Exception as exc:
-        logger.warning("Avatar unavailable, continuing voice-only: %s", exc)
+        # Start the avatar; fall back to voice-only if the provider rejects (e.g. no credits)
+        try:
+            await avatar.start(session, room=ctx.room)
+        except Exception as exc:
+            logger.warning("Avatar unavailable, continuing voice-only: %s", exc)
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(

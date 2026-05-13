@@ -31,13 +31,13 @@ WORKDIR /app
 
 # Copy just the dependency files first, for more efficient layer caching
 COPY pyproject.toml uv.lock ./
-RUN mkdir -p src
+RUN mkdir -p src data
 
-# Install Python dependencies using UV's lock file
-# --locked ensures we use exact versions from uv.lock for reproducible builds
-# This creates a virtual environment and installs all dependencies
-# Ensure your uv.lock file is checked in for consistency across environments
-RUN uv sync --locked
+# OmniVoice is a local-path dependency that lives outside the build context
+# and requires a local GPU. Strip it from pyproject.toml, regenerate the
+# lock without it, then install.  uv sync --locked would still try to validate
+# the editable path even with --no-group, hence the two-step approach.
+RUN sed -i '/omnivoice/d' pyproject.toml && uv lock && uv sync --locked --no-dev
 
 # Copy all remaining application files into the container
 # This includes source code, configuration files, and dependency specifications
@@ -70,9 +70,15 @@ COPY --from=build --chown=appuser:appuser /app /app
 
 WORKDIR /app
 
+# Ensure the data directory exists for the health.db volume mount
+RUN mkdir -p /app/data && chown appuser:appuser /app/data
+
 # Switch to the non-privileged user for all subsequent operations
 # This improves security by not running as root
 USER appuser
+
+# Expose prompter UI port (configurable via PROMPTER_PORT env var)
+EXPOSE 7860
 
 # Run the AgentServer using UV
 # UV will activate the virtual environment and run the agent.

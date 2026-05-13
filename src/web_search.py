@@ -21,19 +21,21 @@ class SearchResult:
     title: str
     snippet: str
     url: str
+    published_date: str | None = None
 
     def to_summary(self) -> str:
-        return f"{self.title}: {self.snippet} ({self.url})"
+        date_part = f" [{self.published_date}]" if self.published_date else ""
+        return f"{self.title}{date_part}: {self.snippet} ({self.url})"
 
 
 class SearchProvider(Protocol):
-    async def search(self, query: str, max_results: int = 3) -> list[SearchResult]: ...
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]: ...
 
 
 class DuckDuckGoProvider:
     """Free web search via the `ddgs` library. No API key needed."""
 
-    async def search(self, query: str, max_results: int = 3) -> list[SearchResult]:
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
         from ddgs import DDGS
 
         def _sync_search() -> list[SearchResult]:
@@ -44,6 +46,7 @@ class DuckDuckGoProvider:
                         title=row.get("title", ""),
                         snippet=row.get("body", ""),
                         url=row.get("href", ""),
+                        published_date=row.get("published") or None,
                     )
                     for row in rows
                 ]
@@ -53,6 +56,10 @@ class DuckDuckGoProvider:
 
 class TavilyProvider:
     """LLM-optimized search via Tavily.
+
+    Uses advanced search depth and returns a pre-synthesized answer when
+    available, along with individual results with publication dates for
+    freshness evaluation.
 
     Requires `tavily-python` to be installed and `TAVILY_API_KEY` env var set.
     Not active by default — enable with WEB_SEARCH_PROVIDER=tavily.
@@ -65,20 +72,37 @@ class TavilyProvider:
                 "TAVILY_API_KEY env var not set; cannot use Tavily provider"
             )
 
-    async def search(self, query: str, max_results: int = 3) -> list[SearchResult]:
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
         from tavily import TavilyClient
 
         def _sync_search() -> list[SearchResult]:
             client = TavilyClient(api_key=self.api_key)
-            response = client.search(query=query, max_results=max_results)
-            return [
-                SearchResult(
-                    title=row.get("title", ""),
-                    snippet=row.get("content", ""),
-                    url=row.get("url", ""),
+            response = client.search(
+                query=query,
+                search_depth="advanced",
+                max_results=max_results,
+                include_answer=True,
+            )
+            results: list[SearchResult] = []
+            answer = response.get("answer")
+            if answer:
+                results.append(
+                    SearchResult(
+                        title="Direct Answer",
+                        snippet=answer,
+                        url="(synthesized)",
+                    )
                 )
-                for row in response.get("results", [])
-            ]
+            for row in response.get("results", []):
+                results.append(
+                    SearchResult(
+                        title=row.get("title", ""),
+                        snippet=row.get("content", ""),
+                        url=row.get("url", ""),
+                        published_date=row.get("published_date") or None,
+                    )
+                )
+            return results
 
         return await asyncio.to_thread(_sync_search)
 
@@ -94,7 +118,7 @@ class FallbackProvider:
         self.primary = primary
         self.secondary = secondary
 
-    async def search(self, query: str, max_results: int = 3) -> list[SearchResult]:
+    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
         try:
             return await self.primary.search(query, max_results=max_results)
         except Exception as exc:

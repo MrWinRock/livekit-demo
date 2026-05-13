@@ -1,0 +1,15 @@
+services:
+  agent:
+    build: .
+    env_file: .env.local
+    environment:
+      OMNIVOICE_MODEL: ""
+      PROMPTER_HOST: "0.0.0.0"
+    volumes:
+      - agent-data:/app/data
+    ports:
+      - "7860:7860"
+    restart: unless-stopped
+
+volumes:
+  agent-data:
